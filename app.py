@@ -89,14 +89,15 @@ if not storage_on():
 
 # ---------- Data ----------
 try:
-    df = load(start, end)
+    df, skipped = load(start, end)
 except Exception as ex:
     st.error(f"Gagal mengambil data dari Odoo: {ex}")
     st.stop()
 if df.empty:
-    st.info("Tidak ada data Pick/Pack pada tanggal ini.")
+    st.info(f"Tidak ada data Pick/Pack pada tanggal ini. ({skipped} baris dikecualikan: bukan referensi PICK/PACK atau belum Done)")
     st.stop()
-st.caption(f"Periode {start} s/d {end} (WIB). Outlet: marketplace kosong dihitung Website.")
+st.caption(f"Periode {start} s/d {end} (WIB). Outlet: marketplace kosong dihitung Website. "
+           f"Nama = Responsible di transfer. {skipped} baris dikecualikan (bukan PICK/PACK atau belum Done).")
 
 
 RESULT = {}

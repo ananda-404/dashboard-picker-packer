@@ -32,7 +32,7 @@ def fetch_rows(call, start, end):
                [("state", "=", "done"), ("date", ">=", s), ("date", "<", e),
                 ("picking_id.picking_type_id", "in", list(role))])
     if not ids:
-        return pd.DataFrame(columns=COLS)
+        return pd.DataFrame(columns=COLS), 0
 
     lines = []
     for ch in _chunks(ids):
@@ -42,7 +42,7 @@ def fetch_rows(call, start, end):
     pids = list({l["picking_id"][0] for l in lines if l.get("picking_id")})
     pk = {}
     for ch in _chunks(pids):
-        for p in call("stock.picking", "read", ch, fields=["name", "picking_type_id", "sale_id"]):
+        for p in call("stock.picking", "read", ch, fields=["name", "picking_type_id", "sale_id", "user_id", "state"]):
             pk[p["id"]] = p
 
     sids = list({p["sale_id"][0] for p in pk.values() if p.get("sale_id")})
@@ -51,28 +51,32 @@ def fetch_rows(call, start, end):
         for so in call("sale.order", "read", ch, fields=["marketplace"]):
             mk[so["id"]] = so.get("marketplace")
 
-    rows = []
+    rows, skipped = [], 0
     for l in lines:
         p = pk.get(l["picking_id"][0]) if l.get("picking_id") else None
         if not p or not p.get("picking_type_id"):
             continue
-        r = role.get(p["picking_type_id"][0])
-        if not r:
+        # Hanya referensi PICK / PACK (INT, OUT, dll. dibuang) dan transfer berstatus Done
+        nm = (p.get("name") or "").upper()
+        r = "Picker" if "/PICK/" in nm else ("Packer" if "/PACK/" in nm else None)
+        if r is None or p.get("state") != "done":
+            skipped += 1
             continue
+        who = p.get("user_id") or l.get("write_uid")  # Responsible di transfer; cadangan: user terakhir yang mengubah baris
         sale = p.get("sale_id")
         mp = mk.get(sale[0]) if sale else None
         outlet = {"shopee": "Shopee", "tiktok": "TikTok"}.get(mp or "", "Website")
         local = datetime.strptime(l["date"], FMT) + WIB
         rows.append({
             "tanggal": local.date(), "jam": local.hour,
-            "user": l["write_uid"][1] if l.get("write_uid") else "-",
+            "user": who[1] if who else "-",
             "role": r,
             "order": sale[1] if sale else p["name"],
             "qty": l.get("qty_done") or 0,
             "lokasi": l["location_id"][1] if l.get("location_id") else "-",
             "outlet": outlet,
         })
-    return pd.DataFrame(rows, columns=COLS)
+    return pd.DataFrame(rows, columns=COLS), skipped
 
 
 def summarize(df, role):
