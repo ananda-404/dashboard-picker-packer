@@ -6,7 +6,7 @@ WIB = timedelta(hours=7)  # Odoo menyimpan UTC; Indonesia (WIB) = UTC+7
 FMT = "%Y-%m-%d %H:%M:%S"
 WAREHOUSES = ["PGM-LB-SHPE", "PGM-LB-TKTK", "PGM-LB-OL"]
 OUTLETS = ["Shopee", "TikTok", "Website"]
-COLS = ["tanggal", "jam", "user", "role", "order", "qty", "lokasi", "outlet"]
+COLS = ["tanggal", "jam", "user", "role", "order", "qty", "lokasi", "outlet", "ref", "selesai"]
 
 
 def _chunks(ids, n=1000):
@@ -70,6 +70,8 @@ def fetch_rows(call, start, end):
         outlet = {"shopee": "Shopee", "tiktok": "TikTok"}.get(mp or "", "Website")
         who = p.get("user_id") or l.get("write_uid")  # Responsible di transfer; cadangan: user terakhir yang mengubah baris
         local = datetime.strptime(p["date_done"], FMT) + WIB  # waktu selesai transfer
+        if not (start <= local.date() <= end):
+            continue  # pengaman: hanya transfer yang selesai di rentang tanggal terpilih
         rows.append({
             "tanggal": local.date(), "jam": local.hour,
             "user": who[1] if who else "-",
@@ -78,6 +80,7 @@ def fetch_rows(call, start, end):
             "qty": l.get("qty_done") or 0,
             "lokasi": l["location_id"][1] if l.get("location_id") else "-",
             "outlet": outlet,
+            "ref": p["name"], "selesai": local.strftime(FMT),
         })
     return pd.DataFrame(rows, columns=COLS), skipped
 
@@ -113,7 +116,8 @@ def to_excel(tables, detail):
         for name, t in tables.items():
             t.to_excel(w, sheet_name=name, index=False)
         d = detail.rename(columns={"tanggal": "Tanggal", "jam": "Jam", "user": "Nama", "role": "Peran",
-                                   "order": "Order", "qty": "Qty", "lokasi": "Lokasi", "outlet": "Outlet"})
+                                   "order": "Order", "qty": "Qty", "lokasi": "Lokasi", "outlet": "Outlet",
+                                   "ref": "Referensi", "selesai": "Selesai (WIB)"})
         d.to_excel(w, sheet_name="Detail", index=False)
         for ws in w.book.worksheets:
             for col in ws.columns:

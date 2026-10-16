@@ -26,7 +26,7 @@ def odoo_conn():
 
 
 @st.cache_data(ttl=300, show_spinner="Mengambil data dari Odoo...")
-def load(start, end):
+def load(start, end, version=3):  # naikkan 'version' tiap ada perubahan logic.py agar cache lama tidak dipakai
     return fetch_rows(odoo_conn(), start, end)
 
 
@@ -89,7 +89,7 @@ if not storage_on():
 
 # ---------- Data ----------
 try:
-    df, skipped = load(start, end)
+    df, skipped = load(start, end, 3)
 except Exception as ex:
     st.error(f"Gagal mengambil data dari Odoo: {ex}")
     st.stop()
@@ -99,6 +99,9 @@ if df.empty:
 st.caption(f"Periode {start} s/d {end} (WIB). Outlet: marketplace kosong dihitung Website. "
            f"Nama = Responsible di transfer. Tanggal = Date of Transfer. {skipped} transfer dikecualikan (bukan PICK/PACK).")
 
+
+with st.expander("Detail transfer (referensi & waktu selesai)"):
+    st.dataframe(df, hide_index=True, use_container_width=True)
 
 RESULT = {}
 
