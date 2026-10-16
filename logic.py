@@ -15,35 +15,44 @@ def _chunks(ids, n=1000):
 
 
 def fetch_rows(call, start, end):
-    """Ambil baris Pick/Pack selesai pada rentang tanggal WIB [start, end]."""
+    """Ambil transfer PICK/PACK berstatus Done yang Date of Transfer-nya jatuh di [start, end] (WIB).
+    Return (DataFrame, jumlah transfer yang dikecualikan karena referensi bukan PICK/PACK)."""
     types = call(
         "stock.picking.type", "search_read",
         [("sequence_code", "in", ["PICK", "PACK"]),
          ("warehouse_id.name", "in", WAREHOUSES)],
         fields=["sequence_code"], context={"active_test": False},
     )
-    role = {t["id"]: ("Picker" if t["sequence_code"] == "PICK" else "Packer") for t in types}
-    if not role:
+    tids = [t["id"] for t in types]
+    if not tids:
         raise RuntimeError("Tipe operasi Pick/Pack untuk gudang SHPE/TKTK/OL tidak ditemukan.")
 
     s = (datetime.combine(start, datetime.min.time()) - WIB).strftime(FMT)
     e = (datetime.combine(end, datetime.min.time()) + timedelta(days=1) - WIB).strftime(FMT)
-    ids = call("stock.move.line", "search",
-               [("state", "=", "done"), ("date", ">=", s), ("date", "<", e),
-                ("picking_id.picking_type_id", "in", list(role))])
-    if not ids:
-        return pd.DataFrame(columns=COLS), 0
+    picks = call("stock.picking", "search_read",
+                 [("state", "=", "done"), ("date_done", ">=", s), ("date_done", "<", e),
+                  ("picking_type_id", "in", tids)],
+                 fields=["name", "sale_id", "user_id", "date_done"])
+
+    pk, skipped = {}, 0
+    for p in picks:
+        nm = (p.get("name") or "").upper()
+        if "/PICK/" in nm:
+            p["role"] = "Picker"
+        elif "/PACK/" in nm:
+            p["role"] = "Packer"
+        else:
+            skipped += 1  # INT, OUT, dll.
+            continue
+        pk[p["id"]] = p
+    if not pk:
+        return pd.DataFrame(columns=COLS), skipped
 
     lines = []
-    for ch in _chunks(ids):
-        lines += call("stock.move.line", "read", ch,
-                      fields=["picking_id", "qty_done", "location_id", "date", "write_uid"])
-
-    pids = list({l["picking_id"][0] for l in lines if l.get("picking_id")})
-    pk = {}
-    for ch in _chunks(pids):
-        for p in call("stock.picking", "read", ch, fields=["name", "picking_type_id", "sale_id", "user_id", "state"]):
-            pk[p["id"]] = p
+    for ch in _chunks(list(pk)):
+        lines += call("stock.move.line", "search_read",
+                      [("picking_id", "in", ch), ("state", "=", "done")],
+                      fields=["picking_id", "qty_done", "location_id", "write_uid"])
 
     sids = list({p["sale_id"][0] for p in pk.values() if p.get("sale_id")})
     mk = {}
@@ -51,26 +60,20 @@ def fetch_rows(call, start, end):
         for so in call("sale.order", "read", ch, fields=["marketplace"]):
             mk[so["id"]] = so.get("marketplace")
 
-    rows, skipped = [], 0
+    rows = []
     for l in lines:
         p = pk.get(l["picking_id"][0]) if l.get("picking_id") else None
-        if not p or not p.get("picking_type_id"):
+        if not p:
             continue
-        # Hanya referensi PICK / PACK (INT, OUT, dll. dibuang) dan transfer berstatus Done
-        nm = (p.get("name") or "").upper()
-        r = "Picker" if "/PICK/" in nm else ("Packer" if "/PACK/" in nm else None)
-        if r is None or p.get("state") != "done":
-            skipped += 1
-            continue
-        who = p.get("user_id") or l.get("write_uid")  # Responsible di transfer; cadangan: user terakhir yang mengubah baris
         sale = p.get("sale_id")
         mp = mk.get(sale[0]) if sale else None
         outlet = {"shopee": "Shopee", "tiktok": "TikTok"}.get(mp or "", "Website")
-        local = datetime.strptime(l["date"], FMT) + WIB
+        who = p.get("user_id") or l.get("write_uid")  # Responsible di transfer; cadangan: user terakhir yang mengubah baris
+        local = datetime.strptime(p["date_done"], FMT) + WIB  # waktu selesai transfer
         rows.append({
             "tanggal": local.date(), "jam": local.hour,
             "user": who[1] if who else "-",
-            "role": r,
+            "role": p["role"],
             "order": sale[1] if sale else p["name"],
             "qty": l.get("qty_done") or 0,
             "lokasi": l["location_id"][1] if l.get("location_id") else "-",

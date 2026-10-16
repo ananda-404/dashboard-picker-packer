@@ -94,10 +94,10 @@ except Exception as ex:
     st.error(f"Gagal mengambil data dari Odoo: {ex}")
     st.stop()
 if df.empty:
-    st.info(f"Tidak ada data Pick/Pack pada tanggal ini. ({skipped} baris dikecualikan: bukan referensi PICK/PACK atau belum Done)")
+    st.info(f"Tidak ada data Pick/Pack pada tanggal ini. ({skipped} transfer dikecualikan karena referensinya bukan PICK/PACK)")
     st.stop()
 st.caption(f"Periode {start} s/d {end} (WIB). Outlet: marketplace kosong dihitung Website. "
-           f"Nama = Responsible di transfer. {skipped} baris dikecualikan (bukan PICK/PACK atau belum Done).")
+           f"Nama = Responsible di transfer. Tanggal = Date of Transfer. {skipped} transfer dikecualikan (bukan PICK/PACK).")
 
 
 RESULT = {}
