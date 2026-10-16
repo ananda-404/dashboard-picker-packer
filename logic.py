@@ -95,3 +95,21 @@ def summarize(df, role):
         if c not in ("Tanggal", "Nama"):
             out[c] = out[c].round().astype(int)
     return out.sort_values(["Tanggal", "Total Pcs"], ascending=[True, False]).reset_index(drop=True)
+
+
+def to_excel(tables, detail):
+    """tables: {'Picker': df, 'Packer': df}; detail: df baris mentah. Return bytes .xlsx"""
+    from io import BytesIO
+
+    buf = BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as w:
+        for name, t in tables.items():
+            t.to_excel(w, sheet_name=name, index=False)
+        d = detail.rename(columns={"tanggal": "Tanggal", "jam": "Jam", "user": "Nama", "role": "Peran",
+                                   "order": "Order", "qty": "Qty", "lokasi": "Lokasi", "outlet": "Outlet"})
+        d.to_excel(w, sheet_name="Detail", index=False)
+        for ws in w.book.worksheets:
+            for col in ws.columns:
+                width = max(len(str(c.value)) if c.value is not None else 0 for c in col)
+                ws.column_dimensions[col[0].column_letter].width = min(max(width + 2, 10), 40)
+    return buf.getvalue()

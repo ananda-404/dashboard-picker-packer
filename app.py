@@ -5,7 +5,7 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
-from logic import OUTLETS, WIB, fetch_rows, summarize
+from logic import OUTLETS, WIB, fetch_rows, summarize, to_excel
 
 socket.setdefaulttimeout(120)
 st.set_page_config(page_title="Produktivitas Picker & Packer", layout="wide")
@@ -99,6 +99,9 @@ if df.empty:
 st.caption(f"Periode {start} s/d {end} (WIB). Outlet: marketplace kosong dihitung Website.")
 
 
+RESULT = {}
+
+
 def section(role):
     t = summarize(df, role)
     if t.empty:
@@ -116,6 +119,7 @@ def section(role):
         st.session_state.jam[(str(a), b)] = float(j) if pd.notna(j) else 0.0
     t["Jam Kerja"] = ed["Jam Kerja"].fillna(0).astype(float).values
     t["Pcs/Jam"] = (t["Total Pcs"] / t["Jam Kerja"].where(t["Jam Kerja"] > 0)).round(1)
+    RESULT[role] = t
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Total Order", int(t["Total Order"].sum()))
@@ -140,3 +144,12 @@ with tab_picker:
     section("Picker")
 with tab_packer:
     section("Packer")
+
+if RESULT:
+    st.sidebar.download_button(
+        "Export ke Excel",
+        data=to_excel(RESULT, df),
+        file_name=f"produktivitas_{start}_{end}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    st.sidebar.caption("Isi jam kerja dulu agar ikut ter-export.")
