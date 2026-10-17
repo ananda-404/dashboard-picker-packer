@@ -6,10 +6,19 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
+from theme import THEMES, build_css, style_table
 from logic import OUTLETS, WIB, fetch_rows, summarize, to_excel, verify_password
 
 socket.setdefaulttimeout(120)
 st.set_page_config(page_title="Produktivitas Picker & Packer", layout="wide")
+
+# ---------- Tema ----------
+_names = list(THEMES)
+_q = st.query_params.get("tema")
+tema = st.sidebar.selectbox("Tema tampilan", _names, index=_names.index(_q) if _q in _names else 0)
+st.query_params["tema"] = tema
+T = THEMES[tema]
+st.markdown(f"<style>{build_css(T)}</style>", unsafe_allow_html=True)
 @st.cache_resource
 def _failures():
     return {}
@@ -153,7 +162,7 @@ def dashboard():
 
 
     with st.expander("Detail transfer (referensi & waktu selesai)"):
-        st.dataframe(df, hide_index=True, use_container_width=True)
+        st.dataframe(style_table(df, T), hide_index=True, use_container_width=True)
 
     RESULT = {}
 
@@ -183,14 +192,15 @@ def dashboard():
         ok = t[t["Jam Kerja"] > 0]
         c3.metric("Rata-rata Pcs/Jam", round(ok["Total Pcs"].sum() / ok["Jam Kerja"].sum(), 1) if len(ok) else "-")
 
-        st.dataframe(t, hide_index=True, use_container_width=True)
+        st.dataframe(style_table(t, T), hide_index=True, use_container_width=True)
         st.caption("Pcs/Jam kosong = jam kerja belum diisi.")
         st.subheader("Pcs per outlet")
-        st.bar_chart(t.groupby("Nama")[[f"Pcs {o}" for o in OUTLETS]].sum())
+        st.bar_chart(t.groupby("Nama")[[f"Pcs {o}" for o in OUTLETS]].sum(),
+                     color=[T["accent"], T["accent2"], T["accent3"]] if T else None)
         if role == "Packer":
             st.subheader("Pcs per jam (waktu proses)")
             hourly = df[df["role"] == "Packer"].groupby("jam")["qty"].sum().reindex(range(24), fill_value=0)
-            st.bar_chart(hourly)
+            st.bar_chart(hourly, color=T["accent"] if T else None)
         else:
             st.caption("Tren per jam tidak ditampilkan untuk picker karena validasi dilakukan per batch.")
 
