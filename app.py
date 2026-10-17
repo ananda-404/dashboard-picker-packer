@@ -1,3 +1,4 @@
+import re
 import socket
 import time
 import xmlrpc.client
@@ -6,7 +7,7 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
-from theme import THEMES, build_css, palette, style_table
+from theme import THEMES, build_css, neon_theme, palette, style_table
 from logic import OUTLETS, WIB, fetch_rows, summarize, to_excel, verify_password
 
 socket.setdefaulttimeout(120)
@@ -17,7 +18,21 @@ _names = list(THEMES)
 _q = st.query_params.get("tema")
 tema = st.sidebar.selectbox("Tema tampilan", _names, index=_names.index(_q) if _q in _names else 0)
 st.query_params["tema"] = tema
-T = THEMES[tema]
+if tema == "Futuristik (Neon)":
+    _w = st.query_params.get("warna", "00e5ff")
+    _w = "#" + (_w if re.fullmatch(r"[0-9a-fA-F]{6}", _w or "") else "00e5ff")
+    c1 = st.sidebar.color_picker("Warna neon utama (bebas pilih)", _w)
+    st.query_params["warna"] = c1.lstrip("#")
+    oto = st.sidebar.checkbox("Warna kedua & ketiga otomatis", value=True)
+    if oto:
+        c2 = c3 = None
+    else:
+        c2 = st.sidebar.color_picker("Warna neon kedua", "#ff2bd6")
+        c3 = st.sidebar.color_picker("Warna neon ketiga", "#7c4dff")
+    # warna bawaan (cyan) memakai tampilan neon biru asli
+    T = THEMES[tema] if (c1.lower() == "#00e5ff" and oto) else neon_theme(c1, c2, c3)
+else:
+    T = THEMES[tema]
 st.markdown(f"<style>{build_css(T)}</style>", unsafe_allow_html=True)
 @st.cache_resource
 def _failures():
@@ -194,10 +209,14 @@ def dashboard():
 
         st.dataframe(style_table(t, T), hide_index=True, use_container_width=True)
         st.caption("Pcs/Jam kosong = jam kerja belum diisi.")
+        st.subheader("Pcs per outlet")
+        o = t.groupby("Nama")[[f"Pcs {x}" for x in OUTLETS]].sum()
+        o.columns = OUTLETS
+        st.line_chart(o, color=[T["accent"], T["accent2"], T["accent3"]] if T else None, x_label="Nama", y_label="Pcs")
         names = list(t.groupby("Nama")["Total Pcs"].sum().sort_values(ascending=False).index)
-        sel = st.multiselect(f"Tampilkan di grafik ({role})", names, default=names[:8], key=f"sel_{role}")
+        sel = st.multiselect(f"Tampilkan di grafik per jam ({role})", names, default=names[:8], key=f"sel_{role}")
         if not sel:
-            st.info("Pilih minimal satu nama untuk menampilkan grafik.")
+            st.info("Pilih minimal satu nama untuk menampilkan grafik per jam.")
         else:
             st.subheader("Pcs per jam, per orang")
             hourly = (df[(df["role"] == role) & (df["user"].isin(sel))]
@@ -206,10 +225,6 @@ def dashboard():
             st.line_chart(hourly, color=palette(T, hourly.shape[1]), x_label="Jam (WIB)", y_label="Pcs")
             if role == "Picker":
                 st.caption("Picker divalidasi per batch, jadi grafik per jam bisa berbentuk lonjakan.")
-            st.subheader("Pcs per outlet, per orang")
-            o = t.groupby("Nama")[[f"Pcs {x}" for x in OUTLETS]].sum().loc[sel].T
-            o.index = OUTLETS
-            st.line_chart(o, color=palette(T, o.shape[1]), x_label="Outlet", y_label="Pcs")
 
 
     top = st.container()

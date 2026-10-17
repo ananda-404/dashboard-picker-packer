@@ -88,3 +88,62 @@ def palette(T, n):
     """Daftar warna untuk n garis (aksen tema dulu, lalu warna tambahan; berulang jika lebih banyak)."""
     base = ([T["accent"], T["accent2"], T["accent3"]] if T else []) + EXTRA
     return [base[i % len(base)] for i in range(n)]
+
+
+# ---------- Tema neon dengan warna pilihan sendiri ----------
+import colorsys
+
+
+def _rgb(h):
+    h = h.lstrip("#")
+    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def _hex(rgb):
+    return "#%02x%02x%02x" % tuple(max(0, min(255, round(c))) for c in rgb)
+
+
+def _mix(a, b, t):
+    """Campur warna a dan b; t = porsi b (0..1)."""
+    return _hex(tuple(x * (1 - t) + y * t for x, y in zip(_rgb(a), _rgb(b))))
+
+
+def _lum(h):
+    f = lambda c: c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+    r, g, b = (f(x / 255) for x in _rgb(h))
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def _contrast(a, b):
+    x, y = sorted((_lum(a), _lum(b)), reverse=True)
+    return (x + 0.05) / (y + 0.05)
+
+
+def _lift(c, bg_of):
+    """Terangkan warna c (campur putih) sampai kontrasnya dengan latar cukup (>= 4,5) agar mudah dibaca."""
+    for i in range(21):
+        a = _mix(c, "#ffffff", i / 20)
+        if _contrast(a, bg_of(a)) >= 4.5:
+            return a
+    return "#ffffff"
+
+
+def neon_theme(accent, accent2=None, accent3=None):
+    """Tema neon dari satu warna utama (warna kedua & ketiga otomatis jika tidak diberikan)."""
+    accent = _lift(accent, lambda a: _mix("#000000", a, 0.16))
+    card = _mix("#000000", accent, 0.16)
+    r, g, b = (c / 255 for c in _rgb(accent))
+    hue = colorsys.rgb_to_hls(r, g, b)[0]
+
+    def shifted(d):
+        rr, gg, bb = colorsys.hls_to_rgb((hue + d) % 1.0, 0.6, 1.0)
+        return _hex((rr * 255, gg * 255, bb * 255))
+
+    on_card = lambda _a: card
+    return dict(
+        bg=_mix("#000000", accent, 0.07), sidebar=_mix("#000000", accent, 0.10),
+        card=card, text=_mix(accent, "#ffffff", 0.88), accent=accent,
+        accent2=_lift(accent2 or shifted(0.45), on_card),
+        accent3=_lift(accent3 or shifted(0.70), on_card),
+        font="Rajdhani", head="Orbitron", grid=True, glow=True,
+    )
