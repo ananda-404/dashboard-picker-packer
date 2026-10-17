@@ -1,14 +1,55 @@
 import socket
+import time
 import xmlrpc.client
 from datetime import datetime
 
 import pandas as pd
 import streamlit as st
 
-from logic import OUTLETS, WIB, fetch_rows, summarize, to_excel
+from logic import OUTLETS, WIB, fetch_rows, summarize, to_excel, verify_password
 
 socket.setdefaulttimeout(120)
 st.set_page_config(page_title="Produktivitas Picker & Packer", layout="wide")
+@st.cache_resource
+def _failures():
+    return {}
+
+
+def login_gate():
+    user = st.session_state.get("auth_user")
+    if user:
+        st.sidebar.caption(f"Login sebagai {user}")
+        if st.sidebar.button("Logout"):
+            del st.session_state["auth_user"]
+            st.rerun()
+        return True
+    st.title("Login")
+    with st.form("login"):
+        email = st.text_input("Email").strip().lower()
+        pw = st.text_input("Password", type="password")
+        go = st.form_submit_button("Masuk")
+    if go:
+        users = {str(k).lower(): v for k, v in st.secrets.get("users", {}).items()}
+        if not users:
+            st.error("Belum ada pengguna di Secrets (bagian [users]).")
+            return False
+        fails = _failures()
+        n, until = fails.get(email, (0, 0.0))
+        if time.time() < until:
+            st.error("Terlalu banyak percobaan gagal. Coba lagi 5 menit lagi.")
+            return False
+        if verify_password(pw, users.get(email, "")):
+            fails.pop(email, None)
+            st.session_state["auth_user"] = email
+            st.rerun()
+        n += 1
+        fails[email] = (n, time.time() + 300 if n >= 5 else 0.0)
+        st.error("Email atau password salah.")
+    return False
+
+
+if not login_gate():
+    st.stop()
 st.title("Produktivitas Picker & Packer")
 
 

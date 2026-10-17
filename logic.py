@@ -128,3 +128,16 @@ def to_excel(tables, detail):
                 width = max(len(str(c.value)) if c.value is not None else 0 for c in col)
                 ws.column_dimensions[col[0].column_letter].width = min(max(width + 2, 10), 40)
     return buf.getvalue()
+
+
+def verify_password(password, stored):
+    """stored berformat: pbkdf2_sha256$iterasi$salt_hex$hash_hex"""
+    import hashlib
+    import hmac
+
+    try:
+        _algo, it, salt, h = stored.split("$")
+        calc = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), int(it)).hex()
+        return hmac.compare_digest(calc, h)
+    except Exception:
+        return False
