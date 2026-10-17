@@ -66,8 +66,8 @@ def odoo_conn():
     return call
 
 
-@st.cache_data(ttl=300, show_spinner="Mengambil data dari Odoo...")
-def load(start, end, version=4):  # naikkan 'version' tiap ada perubahan logic.py agar cache lama tidak dipakai
+@st.cache_data(ttl=3600, max_entries=20, show_spinner="Mengambil data dari Odoo...")
+def load(start, end, version=5, bucket=0):  # naikkan 'version' tiap ada perubahan logic.py agar cache lama tidak dipakai
     return fetch_rows(odoo_conn(), start, end)
 
 
@@ -128,73 +128,89 @@ if st.sidebar.button("Simpan jam kerja"):
 if not storage_on():
     st.sidebar.caption("Jam kerja belum bisa disimpan permanen (Google Sheets belum diatur).")
 
-# ---------- Data ----------
-try:
-    df, skipped = load(start, end, 4)
-except Exception as ex:
-    st.error(f"Gagal mengambil data dari Odoo: {ex}")
-    st.stop()
-if df.empty:
-    st.info(f"Tidak ada data Pick/Pack pada tanggal ini. ({skipped} transfer dikecualikan karena bukan PICK/PACK atau berisi Return of/Waiting)")
-    st.stop()
-st.caption(f"Periode {start} s/d {end} (WIB). Outlet: marketplace kosong dihitung Website. "
-           f"Nama = Responsible di transfer. Tanggal = Date of Transfer. {skipped} transfer dikecualikan (bukan PICK/PACK, Return of, atau Waiting).")
+# ---------- Refresh otomatis ----------
+auto = st.sidebar.toggle("Refresh otomatis", value=True)
+menit = st.sidebar.number_input("Refresh setiap (menit)", min_value=1, max_value=120, value=5, step=1,
+                                disabled=not auto)
+st.sidebar.caption("Matikan refresh otomatis saat sedang mengisi jam kerja.")
+run_every = int(menit) * 60 if auto else None
 
 
-with st.expander("Detail transfer (referensi & waktu selesai)"):
-    st.dataframe(df, hide_index=True, use_container_width=True)
-
-RESULT = {}
-
-
-def section(role):
-    t = summarize(df, role)
-    if t.empty:
-        st.info(f"Tidak ada data {role}.")
+@st.fragment(run_every=run_every)
+def dashboard():
+    # ---------- Data ----------
+    bucket = int(time.time() // ((int(menit) if auto else 5) * 60))
+    try:
+        df, skipped = load(start, end, 5, bucket)
+    except Exception as ex:
+        st.error(f"Gagal mengambil data dari Odoo: {ex}")
         return
-    inp = t[["Tanggal", "Nama"]].copy()
-    inp["Jam Kerja"] = [st.session_state.jam.get((str(a), b), 0.0) for a, b in zip(t["Tanggal"], t["Nama"])]
-    with st.expander(f"Input jam kerja {role}", expanded=False):
-        ed = st.data_editor(
-            inp, key=f"ed_{role}", hide_index=True, use_container_width=True,
-            disabled=["Tanggal", "Nama"],
-            column_config={"Jam Kerja": st.column_config.NumberColumn(min_value=0.0, max_value=24.0, step=0.25)},
-        )
-    for a, b, j in zip(ed["Tanggal"], ed["Nama"], ed["Jam Kerja"]):
-        st.session_state.jam[(str(a), b)] = float(j) if pd.notna(j) else 0.0
-    t["Jam Kerja"] = ed["Jam Kerja"].fillna(0).astype(float).values
-    t["Pcs/Jam"] = (t["Total Pcs"] / t["Jam Kerja"].where(t["Jam Kerja"] > 0)).round(1)
-    RESULT[role] = t
-
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Total Order", int(t["Total Order"].sum()))
-    c2.metric("Total Pcs", int(t["Total Pcs"].sum()))
-    ok = t[t["Jam Kerja"] > 0]
-    c3.metric("Rata-rata Pcs/Jam", round(ok["Total Pcs"].sum() / ok["Jam Kerja"].sum(), 1) if len(ok) else "-")
-
-    st.dataframe(t, hide_index=True, use_container_width=True)
-    st.caption("Pcs/Jam kosong = jam kerja belum diisi.")
-    st.subheader("Pcs per outlet")
-    st.bar_chart(t.groupby("Nama")[[f"Pcs {o}" for o in OUTLETS]].sum())
-    if role == "Packer":
-        st.subheader("Pcs per jam (waktu proses)")
-        hourly = df[df["role"] == "Packer"].groupby("jam")["qty"].sum().reindex(range(24), fill_value=0)
-        st.bar_chart(hourly)
-    else:
-        st.caption("Tren per jam tidak ditampilkan untuk picker karena validasi dilakukan per batch.")
+    if df.empty:
+        st.info(f"Tidak ada data Pick/Pack pada tanggal ini. ({skipped} transfer dikecualikan karena bukan PICK/PACK atau berisi Return of/Waiting)")
+        return
+    st.caption(f"Diperbarui {(datetime.utcnow() + WIB).strftime('%H:%M:%S')} WIB. Periode {start} s/d {end} (WIB). Outlet: marketplace kosong dihitung Website. "
+               f"Nama = Responsible di transfer. Tanggal = Date of Transfer. {skipped} transfer dikecualikan (bukan PICK/PACK, Return of, atau Waiting).")
 
 
-tab_picker, tab_packer = st.tabs(["Picker", "Packer"])
-with tab_picker:
-    section("Picker")
-with tab_packer:
-    section("Packer")
+    with st.expander("Detail transfer (referensi & waktu selesai)"):
+        st.dataframe(df, hide_index=True, use_container_width=True)
 
-if RESULT:
-    st.sidebar.download_button(
-        "Export ke Excel",
-        data=to_excel(RESULT, df),
-        file_name=f"produktivitas_{start}_{end}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
-    st.sidebar.caption("Isi jam kerja dulu agar ikut ter-export.")
+    RESULT = {}
+
+
+    def section(role):
+        t = summarize(df, role)
+        if t.empty:
+            st.info(f"Tidak ada data {role}.")
+            return
+        inp = t[["Tanggal", "Nama"]].copy()
+        inp["Jam Kerja"] = [st.session_state.jam.get((str(a), b), 0.0) for a, b in zip(t["Tanggal"], t["Nama"])]
+        with st.expander(f"Input jam kerja {role}", expanded=False):
+            ed = st.data_editor(
+                inp, key=f"ed_{role}", hide_index=True, use_container_width=True,
+                disabled=["Tanggal", "Nama"],
+                column_config={"Jam Kerja": st.column_config.NumberColumn(min_value=0.0, max_value=24.0, step=0.25)},
+            )
+        for a, b, j in zip(ed["Tanggal"], ed["Nama"], ed["Jam Kerja"]):
+            st.session_state.jam[(str(a), b)] = float(j) if pd.notna(j) else 0.0
+        t["Jam Kerja"] = ed["Jam Kerja"].fillna(0).astype(float).values
+        t["Pcs/Jam"] = (t["Total Pcs"] / t["Jam Kerja"].where(t["Jam Kerja"] > 0)).round(1)
+        RESULT[role] = t
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Total Order", int(t["Total Order"].sum()))
+        c2.metric("Total Pcs", int(t["Total Pcs"].sum()))
+        ok = t[t["Jam Kerja"] > 0]
+        c3.metric("Rata-rata Pcs/Jam", round(ok["Total Pcs"].sum() / ok["Jam Kerja"].sum(), 1) if len(ok) else "-")
+
+        st.dataframe(t, hide_index=True, use_container_width=True)
+        st.caption("Pcs/Jam kosong = jam kerja belum diisi.")
+        st.subheader("Pcs per outlet")
+        st.bar_chart(t.groupby("Nama")[[f"Pcs {o}" for o in OUTLETS]].sum())
+        if role == "Packer":
+            st.subheader("Pcs per jam (waktu proses)")
+            hourly = df[df["role"] == "Packer"].groupby("jam")["qty"].sum().reindex(range(24), fill_value=0)
+            st.bar_chart(hourly)
+        else:
+            st.caption("Tren per jam tidak ditampilkan untuk picker karena validasi dilakukan per batch.")
+
+
+    top = st.container()
+    tab_picker, tab_packer = st.tabs(["Picker", "Packer"])
+    with tab_picker:
+        section("Picker")
+    with tab_packer:
+        section("Packer")
+
+    if RESULT:
+        with top:
+            st.download_button(
+                "Export ke Excel",
+                data=to_excel(RESULT, df),
+                file_name=f"produktivitas_{start}_{end}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+            st.caption("Isi jam kerja dulu agar ikut ter-export.")
+
+
+dashboard()
