@@ -78,3 +78,13 @@ def style_table(df, T):
 
     return (df.style.set_properties(**{"background-color": T["card"], "color": T["text"]})
             .format(fmt, na_rep="-"))
+
+
+EXTRA = ["#ffd166", "#06d6a0", "#ef476f", "#118ab2", "#f78c6b", "#c77dff",
+         "#80ed99", "#4cc9f0", "#f72585", "#b5e48c", "#ffb703", "#8ecae6"]
+
+
+def palette(T, n):
+    """Daftar warna untuk n garis (aksen tema dulu, lalu warna tambahan; berulang jika lebih banyak)."""
+    base = ([T["accent"], T["accent2"], T["accent3"]] if T else []) + EXTRA
+    return [base[i % len(base)] for i in range(n)]

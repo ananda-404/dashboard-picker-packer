@@ -6,7 +6,7 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
-from theme import THEMES, build_css, style_table
+from theme import THEMES, build_css, palette, style_table
 from logic import OUTLETS, WIB, fetch_rows, summarize, to_excel, verify_password
 
 socket.setdefaulttimeout(120)
@@ -194,15 +194,22 @@ def dashboard():
 
         st.dataframe(style_table(t, T), hide_index=True, use_container_width=True)
         st.caption("Pcs/Jam kosong = jam kerja belum diisi.")
-        st.subheader("Pcs per outlet")
-        st.bar_chart(t.groupby("Nama")[[f"Pcs {o}" for o in OUTLETS]].sum(),
-                     color=[T["accent"], T["accent2"], T["accent3"]] if T else None)
-        if role == "Packer":
-            st.subheader("Pcs per jam (waktu proses)")
-            hourly = df[df["role"] == "Packer"].groupby("jam")["qty"].sum().reindex(range(24), fill_value=0)
-            st.bar_chart(hourly, color=T["accent"] if T else None)
+        names = list(t.groupby("Nama")["Total Pcs"].sum().sort_values(ascending=False).index)
+        sel = st.multiselect(f"Tampilkan di grafik ({role})", names, default=names[:8], key=f"sel_{role}")
+        if not sel:
+            st.info("Pilih minimal satu nama untuk menampilkan grafik.")
         else:
-            st.caption("Tren per jam tidak ditampilkan untuk picker karena validasi dilakukan per batch.")
+            st.subheader("Pcs per jam, per orang")
+            hourly = (df[(df["role"] == role) & (df["user"].isin(sel))]
+                      .groupby(["jam", "user"])["qty"].sum().unstack(fill_value=0)
+                      .reindex(range(24), fill_value=0))
+            st.line_chart(hourly, color=palette(T, hourly.shape[1]), x_label="Jam (WIB)", y_label="Pcs")
+            if role == "Picker":
+                st.caption("Picker divalidasi per batch, jadi grafik per jam bisa berbentuk lonjakan.")
+            st.subheader("Pcs per outlet, per orang")
+            o = t.groupby("Nama")[[f"Pcs {x}" for x in OUTLETS]].sum().loc[sel].T
+            o.index = OUTLETS
+            st.line_chart(o, color=palette(T, o.shape[1]), x_label="Outlet", y_label="Pcs")
 
 
     top = st.container()
