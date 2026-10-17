@@ -32,11 +32,15 @@ def fetch_rows(call, start, end):
     picks = call("stock.picking", "search_read",
                  [("state", "=", "done"), ("date_done", ">=", s), ("date_done", "<", e),
                   ("picking_type_id", "in", tids)],
-                 fields=["name", "sale_id", "user_id", "date_done"])
+                 fields=["name", "origin", "sale_id", "user_id", "date_done"])
 
     pk, skipped = {}, 0
     for p in picks:
         nm = (p.get("name") or "").upper()
+        txt = nm + " " + (p.get("origin") or "").upper()
+        if "RETURN OF" in txt or "WAITING" in txt:
+            skipped += 1  # retur / waiting tidak dihitung
+            continue
         if "/PICK/" in nm:
             p["role"] = "Picker"
         elif "/PACK/" in nm:

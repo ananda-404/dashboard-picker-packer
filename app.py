@@ -26,7 +26,7 @@ def odoo_conn():
 
 
 @st.cache_data(ttl=300, show_spinner="Mengambil data dari Odoo...")
-def load(start, end, version=3):  # naikkan 'version' tiap ada perubahan logic.py agar cache lama tidak dipakai
+def load(start, end, version=4):  # naikkan 'version' tiap ada perubahan logic.py agar cache lama tidak dipakai
     return fetch_rows(odoo_conn(), start, end)
 
 
@@ -89,15 +89,15 @@ if not storage_on():
 
 # ---------- Data ----------
 try:
-    df, skipped = load(start, end, 3)
+    df, skipped = load(start, end, 4)
 except Exception as ex:
     st.error(f"Gagal mengambil data dari Odoo: {ex}")
     st.stop()
 if df.empty:
-    st.info(f"Tidak ada data Pick/Pack pada tanggal ini. ({skipped} transfer dikecualikan karena referensinya bukan PICK/PACK)")
+    st.info(f"Tidak ada data Pick/Pack pada tanggal ini. ({skipped} transfer dikecualikan karena bukan PICK/PACK atau berisi Return of/Waiting)")
     st.stop()
 st.caption(f"Periode {start} s/d {end} (WIB). Outlet: marketplace kosong dihitung Website. "
-           f"Nama = Responsible di transfer. Tanggal = Date of Transfer. {skipped} transfer dikecualikan (bukan PICK/PACK).")
+           f"Nama = Responsible di transfer. Tanggal = Date of Transfer. {skipped} transfer dikecualikan (bukan PICK/PACK, Return of, atau Waiting).")
 
 
 with st.expander("Detail transfer (referensi & waktu selesai)"):
