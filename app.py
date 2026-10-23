@@ -180,9 +180,9 @@ def dashboard():
         sufiks = f"_{jam_mulai:%H%M}-{jam_selesai:%H%M}"
         if not df.empty:
             ts = pd.to_datetime(df["selesai"])
-            menit = ts.dt.hour * 60 + ts.dt.minute
-            df = df[(menit >= jam_mulai.hour * 60 + jam_mulai.minute) &
-                    (menit <= jam_selesai.hour * 60 + jam_selesai.minute)]
+            menit_sel = ts.dt.hour * 60 + ts.dt.minute
+            df = df[(menit_sel >= jam_mulai.hour * 60 + jam_mulai.minute) &
+                    (menit_sel <= jam_selesai.hour * 60 + jam_selesai.minute)]
     if df.empty:
         st.info("Tidak ada data Pick/Pack pada tanggal dan jam yang dipilih.")
         return
