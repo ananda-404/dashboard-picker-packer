@@ -2,7 +2,7 @@ import re
 import socket
 import time
 import xmlrpc.client
-from datetime import datetime
+from datetime import datetime, time as dtime
 
 import pandas as pd
 import streamlit as st
@@ -127,6 +127,10 @@ if isinstance(pick, (list, tuple)):
 else:
     start = end = pick
 
+_ja, _jb = st.sidebar.columns(2)
+jam_mulai = _ja.time_input("Dari jam", dtime(0, 0), step=60)
+jam_selesai = _jb.time_input("Sampai jam", dtime(23, 59), step=60)
+
 if st.sidebar.button("Segarkan data"):
     st.cache_data.clear()
 if st.sidebar.button("Cek koneksi Odoo"):
@@ -136,7 +140,7 @@ if st.sidebar.button("Cek koneksi Odoo"):
     except Exception as ex:
         st.sidebar.error(f"Koneksi gagal: {ex}")
 
-if st.sidebar.button("Simpan jam kerja"):
+if storage_on() and st.sidebar.button("Simpan jam kerja"):
     if not storage_on():
         st.sidebar.error("Penyimpanan Google Sheets belum diatur di Secrets.")
     else:
@@ -149,14 +153,12 @@ if st.sidebar.button("Simpan jam kerja"):
             st.sidebar.success("Jam kerja tersimpan.")
         except Exception as ex:
             st.sidebar.error(f"Gagal menyimpan: {ex}")
-if not storage_on():
-    st.sidebar.caption("Jam kerja belum bisa disimpan permanen (Google Sheets belum diatur).")
 
 # ---------- Refresh otomatis ----------
-auto = st.sidebar.toggle("Refresh otomatis", value=True)
+auto = st.sidebar.toggle("Refresh otomatis", value=True,
+                         help="Matikan saat sedang mengisi jam kerja agar isian tidak terganggu.")
 menit = st.sidebar.number_input("Refresh setiap (menit)", min_value=1, max_value=120, value=5, step=1,
                                 disabled=not auto)
-st.sidebar.caption("Matikan refresh otomatis saat sedang mengisi jam kerja.")
 run_every = int(menit) * 60 if auto else None
 
 
@@ -169,11 +171,21 @@ def dashboard():
     except Exception as ex:
         st.error(f"Gagal mengambil data dari Odoo: {ex}")
         return
-    if df.empty:
-        st.info(f"Tidak ada data Pick/Pack pada tanggal ini. ({skipped} transfer dikecualikan karena bukan PICK/PACK atau berisi Return of/Waiting)")
+    st.caption(f"Diperbarui {(datetime.utcnow() + WIB).strftime('%H:%M:%S')} WIB")
+    if jam_mulai > jam_selesai:
+        st.error("Jam mulai harus lebih awal dari jam selesai.")
         return
-    st.caption(f"Diperbarui {(datetime.utcnow() + WIB).strftime('%H:%M:%S')} WIB. Periode {start} s/d {end} (WIB). Outlet: marketplace kosong dihitung Website. "
-               f"Nama = Responsible di transfer. Tanggal = Date of Transfer. {skipped} transfer dikecualikan (bukan PICK/PACK, Return of, atau Waiting).")
+    sufiks = ""
+    if (jam_mulai, jam_selesai) != (dtime(0, 0), dtime(23, 59)):
+        sufiks = f"_{jam_mulai:%H%M}-{jam_selesai:%H%M}"
+        if not df.empty:
+            ts = pd.to_datetime(df["selesai"])
+            menit = ts.dt.hour * 60 + ts.dt.minute
+            df = df[(menit >= jam_mulai.hour * 60 + jam_mulai.minute) &
+                    (menit <= jam_selesai.hour * 60 + jam_selesai.minute)]
+    if df.empty:
+        st.info("Tidak ada data Pick/Pack pada tanggal dan jam yang dipilih.")
+        return
 
 
     with st.expander("Detail transfer (referensi & waktu selesai)"):
@@ -208,7 +220,6 @@ def dashboard():
         c3.metric("Rata-rata Pcs/Jam", round(ok["Total Pcs"].sum() / ok["Jam Kerja"].sum(), 1) if len(ok) else "-")
 
         st.dataframe(style_table(t, T), hide_index=True, use_container_width=True)
-        st.caption("Pcs/Jam kosong = jam kerja belum diisi.")
         st.subheader("Pcs per outlet")
         o = t.groupby("Nama")[[f"Pcs {x}" for x in OUTLETS]].sum()
         o.columns = OUTLETS
@@ -223,8 +234,6 @@ def dashboard():
                       .groupby(["jam", "user"])["qty"].sum().unstack(fill_value=0)
                       .reindex(range(24), fill_value=0))
             st.line_chart(hourly, color=palette(T, hourly.shape[1]), x_label="Jam (WIB)", y_label="Pcs")
-            if role == "Picker":
-                st.caption("Picker divalidasi per batch, jadi grafik per jam bisa berbentuk lonjakan.")
 
 
     top = st.container()
@@ -239,10 +248,10 @@ def dashboard():
             st.download_button(
                 "Export ke Excel",
                 data=to_excel(RESULT, df),
-                file_name=f"produktivitas_{start}_{end}.xlsx",
+                file_name=f"produktivitas_{start}_{end}{sufiks}.xlsx",
+                help="Isi jam kerja dulu agar ikut ter-export.",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
-            st.caption("Isi jam kerja dulu agar ikut ter-export.")
 
 
 dashboard()
