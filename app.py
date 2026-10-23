@@ -1,3 +1,4 @@
+import hashlib
 import re
 import socket
 import time
@@ -34,6 +35,13 @@ if tema == "Futuristik (Neon)":
 else:
     T = THEMES[tema]
 st.markdown(f"<style>{build_css(T)}</style>", unsafe_allow_html=True)
+@st.cache_resource
+def shared_store():
+    """Jam kerja, remarks, dan nama tampilan: bertahan saat halaman dimuat ulang dan dipakai bersama semua
+    pengguna, tetapi hilang jika aplikasi restart (misalnya saat kode diperbarui)."""
+    return {"jam": {}, "remarks": {}, "alias": {}}
+
+
 @st.cache_resource
 def _failures():
     return {}
@@ -111,7 +119,7 @@ def sheet():
 
 
 if "jam" not in st.session_state:
-    st.session_state.jam = {}
+    st.session_state.jam = shared_store()["jam"]
     if storage_on():
         try:
             for r in sheet().get_all_records():
@@ -188,29 +196,57 @@ def dashboard():
         return
 
 
-    with st.expander("Detail transfer (referensi & waktu selesai)"):
-        st.dataframe(style_table(df, T), hide_index=True, use_container_width=True)
-
+    detail_slot = st.container()
     RESULT = {}
-
+    alias = shared_store()["alias"]
+    remarks = shared_store()["remarks"]
 
     def section(role):
         t = summarize(df, role)
         if t.empty:
             st.info(f"Tidak ada data {role}.")
             return
-        inp = t[["Tanggal", "Nama"]].copy()
-        inp["Jam Kerja"] = [st.session_state.jam.get((str(a), b), 0.0) for a, b in zip(t["Tanggal"], t["Nama"])]
-        with st.expander(f"Input jam kerja {role}", expanded=False):
+        t["Nama Asli"] = t["Nama"]
+        sig = hashlib.md5("|".join(f"{a}|{b}" for a, b in zip(t["Tanggal"], t["Nama Asli"])).encode()).hexdigest()[:10]
+        inp = pd.DataFrame({
+            "Tanggal": t["Tanggal"], "Nama Asli": t["Nama Asli"],
+            "Nama Tampil": [alias.get(n, n) for n in t["Nama Asli"]],
+            "Jam Kerja": [st.session_state.jam.get((str(a), b), 0.0) for a, b in zip(t["Tanggal"], t["Nama Asli"])],
+            "Remarks": [remarks.get((str(a), b), "") for a, b in zip(t["Tanggal"], t["Nama Asli"])],
+        })
+        with st.expander(f"Input jam kerja, remarks & nama {role}", expanded=False):
             ed = st.data_editor(
-                inp, key=f"ed_{role}", hide_index=True, use_container_width=True,
-                disabled=["Tanggal", "Nama"],
-                column_config={"Jam Kerja": st.column_config.NumberColumn(min_value=0.0, max_value=24.0, step=0.25)},
+                inp, key=f"ed_{role}_{sig}", hide_index=True, use_container_width=True,
+                disabled=["Tanggal", "Nama Asli"],
+                column_config={
+                    "Nama Tampil": st.column_config.TextColumn(
+                        "Nama Tampil", max_chars=60, help="Ubah nama yang ditampilkan. Kosongkan untuk kembali ke nama asli."),
+                    "Jam Kerja": st.column_config.NumberColumn(min_value=0.0, max_value=24.0, step=0.25),
+                    "Remarks": st.column_config.TextColumn("Remarks", max_chars=300, width="large"),
+                },
             )
-        for a, b, j in zip(ed["Tanggal"], ed["Nama"], ed["Jam Kerja"]):
-            st.session_state.jam[(str(a), b)] = float(j) if pd.notna(j) else 0.0
-        t["Jam Kerja"] = ed["Jam Kerja"].fillna(0).astype(float).values
+        for i in range(len(ed)):
+            d, asli = str(ed["Tanggal"].iloc[i]), ed["Nama Asli"].iloc[i]
+            j = ed["Jam Kerja"].iloc[i]
+            st.session_state.jam[(d, asli)] = float(j) if pd.notna(j) else 0.0
+            r = ed["Remarks"].iloc[i]
+            r = "" if pd.isna(r) else str(r).strip()
+            if r:
+                remarks[(d, asli)] = r
+            else:
+                remarks.pop((d, asli), None)
+            nm = ed["Nama Tampil"].iloc[i]
+            nm = "" if pd.isna(nm) else str(nm).strip()
+            if nm != inp["Nama Tampil"].iloc[i]:  # hanya baris yang benar-benar diubah
+                if nm in ("", asli):
+                    alias.pop(asli, None)
+                else:
+                    alias[asli] = nm
+        t["Nama"] = [alias.get(n, n) for n in t["Nama Asli"]]
+        t["Jam Kerja"] = [st.session_state.jam.get((str(a), b), 0.0) for a, b in zip(t["Tanggal"], t["Nama Asli"])]
         t["Pcs/Jam"] = (t["Total Pcs"] / t["Jam Kerja"].where(t["Jam Kerja"] > 0)).round(1)
+        t["Remarks"] = [remarks.get((str(a), b), "") for a, b in zip(t["Tanggal"], t["Nama Asli"])]
+        t = t.drop(columns="Nama Asli")
         RESULT[role] = t
 
         c1, c2, c3 = st.columns(3)
@@ -219,7 +255,8 @@ def dashboard():
         ok = t[t["Jam Kerja"] > 0]
         c3.metric("Rata-rata Pcs/Jam", round(ok["Total Pcs"].sum() / ok["Jam Kerja"].sum(), 1) if len(ok) else "-")
 
-        st.dataframe(style_table(t, T), hide_index=True, use_container_width=True)
+        st.dataframe(style_table(t, T), hide_index=True, use_container_width=True,
+                     column_config={"Remarks": st.column_config.TextColumn("Remarks", width="large")})
         st.subheader("Pcs per outlet")
         o = t.groupby("Nama")[[f"Pcs {x}" for x in OUTLETS]].sum()
         o.columns = OUTLETS
@@ -230,11 +267,11 @@ def dashboard():
             st.info("Pilih minimal satu nama untuk menampilkan grafik per jam.")
         else:
             st.subheader("Pcs per jam, per orang")
-            hourly = (df[(df["role"] == role) & (df["user"].isin(sel))]
+            dfa = df.assign(user=df["user"].map(lambda u: alias.get(u, u)))
+            hourly = (dfa[(dfa["role"] == role) & (dfa["user"].isin(sel))]
                       .groupby(["jam", "user"])["qty"].sum().unstack(fill_value=0)
                       .reindex(range(24), fill_value=0))
             st.line_chart(hourly, color=palette(T, hourly.shape[1]), x_label="Jam (WIB)", y_label="Pcs")
-
 
     top = st.container()
     tab_picker, tab_packer = st.tabs(["Picker", "Packer"])
@@ -243,13 +280,17 @@ def dashboard():
     with tab_packer:
         section("Packer")
 
+    df_disp = df.assign(user=df["user"].map(lambda u: alias.get(u, u)))
+    with detail_slot:
+        with st.expander("Detail transfer (referensi & waktu selesai)"):
+            st.dataframe(style_table(df_disp, T), hide_index=True, use_container_width=True)
     if RESULT:
         with top:
             st.download_button(
                 "Export ke Excel",
-                data=to_excel(RESULT, df),
+                data=to_excel(RESULT, df_disp),
                 file_name=f"produktivitas_{start}_{end}{sufiks}.xlsx",
-                help="Isi jam kerja dulu agar ikut ter-export.",
+                help="Jam kerja, remarks, dan nama tampilan yang sudah diisi ikut ter-export.",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
 
